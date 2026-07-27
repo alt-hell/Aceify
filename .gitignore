@@ -1,0 +1,9 @@
+node_modules/
+dist/
+dist-electron/
+backend/vectorStore/faiss.index
+backend/vectorStore/store.json
+backend/temp/
+*.log
+.DS_Store
+test.py/

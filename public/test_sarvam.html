@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sarvam WebSocket STT Test</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 800px; margin: auto; }
+        #logs { background: #1e1e1e; color: #00ff00; padding: 10px; height: 400px; overflow-y: auto; font-family: monospace; border-radius: 5px; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; margin-right: 10px; }
+        .partial { color: #aaaaaa; }
+        .final { color: #ffffff; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h2>🎙 Sarvam STT WebSocket Tester</h2>
+    <p>This isolated test connects directly to the backend's WebSocket to test microphone capture and Sarvam's live transcription.</p>
+    
+    <button id="startBtn">Start Recording</button>
+    <button id="stopBtn" disabled>Stop Recording</button>
+    
+    <h3>Live Output:</h3>
+    <div id="logs"></div>
+
+    <script>
+        let ws;
+        let audioContext;
+        let stream;
+
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const logs = document.getElementById('logs');
+
+        function logMsg(msg, className = '') {
+            const div = document.createElement('div');
+            div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            if (className) div.className = className;
+            logs.appendChild(div);
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        startBtn.onclick = async () => {
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+            
+            try {
+                // 1. Connect to our backend WebSocket Proxy
+                ws = new WebSocket('ws://localhost:3001/stt-stream');
+                
+                ws.onopen = () => {
+                    logMsg('🔌 Connected to local backend WebSocket');
+                };
+
+                ws.onmessage = async (event) => {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.type === 'server_ready') {
+                        logMsg('✅ Backend confirmed Sarvam is ready. Starting Mic...');
+                        
+                        // 2. Start Microphone
+                        stream = await navigator.mediaDevices.getUserMedia({ 
+                            audio: { echoCancellation: true, noiseSuppression: true } 
+                        });
+                        
+                        audioContext = new AudioContext({ sampleRate: 16000 });
+                        await audioContext.audioWorklet.addModule('/audio-processor.js');
+                        
+                        const source = audioContext.createMediaStreamSource(stream);
+                        const workletNode = new AudioWorkletNode(audioContext, 'audio-processor');
+                        
+                        source.connect(workletNode);
+                        workletNode.connect(audioContext.destination);
+
+                        logMsg('🎤 Recording started! Say something...');
+
+                        workletNode.port.onmessage = (e) => {
+                            if (ws.readyState === WebSocket.OPEN) {
+                                // Convert Float32 to Int16
+                                const float32Array = e.data;
+                                const int16Array = new Int16Array(float32Array.length);
+                                for (let i = 0; i < float32Array.length; i++) {
+                                    let s = Math.max(-1, Math.min(1, float32Array[i]));
+                                    int16Array[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                                }
+                                // Send raw PCM chunk to backend
+                                ws.send(int16Array.buffer);
+                            }
+                        };
+                    }
+                    
+                    // 3. Handle incoming text
+                    else if (data.type === 'data' && data.data) {
+                        const transcript = data.data.transcript || '';
+                        const isFinal = data.data.is_final === true || data.is_final === true;
+                        
+                        if (transcript.trim().length > 0) {
+                            if (isFinal) {
+                                logMsg(`[FINAL] 🟢: ${transcript}`, 'final');
+                            } else {
+                                logMsg(`[PARTIAL] ⚡: ${transcript}`, 'partial');
+                            }
+                        }
+                    }
+                    else if (data.type === 'error') {
+                        logMsg(`❌ Sarvam Error: ${JSON.stringify(data.data)}`);
+                    }
+                };
+
+                ws.onclose = () => {
+                    logMsg('🔌 WebSocket Closed');
+                    stopRecording();
+                };
+
+            } catch (err) {
+                logMsg(`❌ Error: ${err.message}`);
+                stopRecording();
+            }
+        };
+
+        stopBtn.onclick = stopRecording;
+
+        function stopRecording() {
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            if (stream) stream.getTracks().forEach(track => track.stop());
+            if (audioContext) audioContext.close();
+            if (ws) ws.close();
+            logMsg('🛑 Stopped recording.');
+        }
+    </script>
+</body>
+</html>

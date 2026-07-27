@@ -1,0 +1,336 @@
+
+╔══════════════════════════════════════════════════════════════════╗
+║           AI INTERVIEW ASSISTANT — COMPLETE FLOW GUIDE           ║
+║              Readable in any text editor / CMD / Notepad         ║
+╚══════════════════════════════════════════════════════════════════╝
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  SECTION 1 ──  WHAT THE APP IS MADE OF (TREE STRUCTURE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  AI Interview Assistant (Windows Desktop App)
+  │
+  ├── [1] ELECTRON SHELL  (the desktop app wrapper)
+  │       │
+  │       ├── Main Window  (what you see and control)
+  │       │       ├── Page 1: Setup        → paste resume + job description
+  │       │       ├── Page 2: Q&A Bank     → review/edit all 85 questions
+  │       │       └── Page 3: Live Mode    → mic control during interview
+  │       │
+  │       └── Overlay Window  (floating transparent widget)
+  │               ├── Always on top of screen
+  │               ├── Shows suggested answer in real time
+  │               └── INVISIBLE to Zoom / Meet / Teams screen recording
+  │
+  ├── [2] REACT FRONTEND  (the UI inside both windows)
+  │       ├── src/pages/Setup.jsx
+  │       ├── src/pages/QABank.jsx
+  │       ├── src/pages/LiveMode.jsx
+  │       ├── src/components/Overlay.jsx
+  │       ├── src/components/MicListener.jsx
+  │       ├── src/components/AnswerCard.jsx
+  │       └── src/components/CodeDisplay.jsx
+  │
+  ├── [3] NODE.JS BACKEND  (local server on port 3001)
+  │       ├── POST /generate    → creates 85 Q&A pairs
+  │       ├── POST /embed       → builds the search index
+  │       ├── POST /search      → finds matching answer
+  │       ├── POST /transcribe  → converts audio to text
+  │       └── POST /groq        → live answer for unknown questions
+  │
+  └── [4] AI SERVICES  (the brains)
+          ├── Azure OpenAI  GPT-4o mini     → generates Q&A pairs
+          ├── Groq Whisper  whisper-large-v3 → speech to text
+          ├── Groq LLaMA    llama-3.3-70b   → live fallback answers
+          ├── HuggingFace   MiniLM-L6-v2   → local embeddings (FREE)
+          └── FAISS Index                   → instant vector search (local)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  SECTION 2 ──  PRE-INTERVIEW SETUP FLOW (step by step)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  STEP 1   Student opens the app
+           └──> Electron launches two windows (main + overlay)
+
+  STEP 2   Student pastes Resume + Job Description
+           └──> Setup page has two text boxes for this
+
+  STEP 3   Student clicks "Generate Q&A Bank"
+           └──> App calls POST /generate
+                └──> Azure GPT-4o mini reads both documents
+                     └──> Generates exactly 85 questions + answers
+                          ├── 15  Background / Intro questions
+                          ├── 20  Technical questions
+                          ├── 15  Project-based questions
+                          ├── 15  Behavioral (STAR format)
+                          ├── 10  Job-description specific
+                          └── 10  HR / Culture / Motivation
+
+  STEP 4   Each question is converted into a vector (a number array)
+           └──> App calls POST /embed
+                └──> HuggingFace MiniLM model runs LOCALLY on your PC
+                     └──> Each question → 384 numbers
+                          └──> All vectors saved in FAISS index on disk
+                               (file: backend/vectorStore/faiss.index)
+                               (file: backend/vectorStore/store.json)
+
+  STEP 5   Student reviews the Q&A Bank
+           └──> Can read all 85 questions grouped by category
+                └──> Can edit any answer to personalise it
+
+  STEP 6   Student clicks "Start Interview"
+           └──> App goes to Live Mode
+                └──> Ready to listen
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  SECTION 3 ──  LIVE INTERVIEW FLOW (what happens during interview)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  STEP 1   Interviewer asks a question (speaks out loud)
+           └──> MicListener.jsx captures microphone audio
+                └──> Records in 4-second chunks
+                     └──> Sends audio file to backend
+
+  STEP 2   Audio is converted to text
+           └──> POST /transcribe
+                └──> Groq Whisper (whisper-large-v3) processes audio
+                     └──> Returns: "Tell me about yourself"
+                          (takes about 1-2 seconds)
+
+  STEP 3   App searches for the best matching answer
+           └──> POST /search
+                └──> Transcribed text → vector (HuggingFace MiniLM)
+                     └──> FAISS searches all 85 stored question vectors
+                          └──> Returns: best match + confidence score
+
+  STEP 4   Two paths depending on confidence score:
+
+           ┌─────────────────────────────────────────────────┐
+           │                                                  │
+           ▼                                                  ▼
+    Confidence >= 65%                              Confidence < 65%
+    (Question was predicted)                    (Surprise question)
+           │                                                  │
+           ▼                                                  ▼
+    Pull answer from store.json              Call POST /groq
+    Takes: < 100ms (instant)                 Groq LLaMA 3.3 70B
+    Source: pre-written by GPT-4o            Generates live answer
+                                             Takes: ~2-3 seconds
+           │                                                  │
+           └──────────────────┬───────────────────────────────┘
+                              │
+                              ▼
+  STEP 5   Answer is sent to the Overlay Window
+           └──> LiveMode.jsx calls:  window.electron.showAnswer(data)
+                └──> Electron main.js receives: ipcMain.on('show-answer')
+                     └──> Forwards to overlay: overlayWindow.send('display-answer')
+                          └──> Overlay.jsx displays:
+                               ├── Detected question text
+                               ├── Confidence percentage bar
+                               ├── Suggested answer text
+                               ├── Code block (if coding question)
+                               └── Warning if confidence < 60%
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  SECTION 4 ──  SCREEN PROTECTION (how overlay stays hidden)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  In electron/main.js, one line does all the magic:
+
+       overlayWindow.setContentProtection(true)
+
+  This calls the Windows operating system API:
+       SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)
+
+  Result:
+       ┌─────────────────┬────────────────────────────────┐
+       │ Who is looking  │ What they see                  │
+       ├─────────────────┼────────────────────────────────┤
+       │ You (student)   │ ✅  Overlay fully visible       │
+       │ Zoom recording  │ ❌  Overlay completely missing  │
+       │ Google Meet     │ ❌  Overlay completely missing  │
+       │ MS Teams        │ ❌  Overlay completely missing  │
+       │ OBS Studio      │ ❌  Overlay completely missing  │
+       │ Any screen rec  │ ❌  Overlay completely missing  │
+       └─────────────────┴────────────────────────────────┘
+
+  This is enforced at the hardware/GPU compositor level.
+  It cannot be bypassed by any software.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  SECTION 5 ──  IPC COMMUNICATION (how windows talk to each other)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  React (LiveMode.jsx)
+       │
+       │  window.electron.showAnswer(answerData)
+       ▼
+  preload.js
+       │
+       │  ipcRenderer.send('show-answer', answerData)
+       ▼
+  electron/main.js
+       │
+       │  ipcMain.on('show-answer') received
+       │  overlayWindow.webContents.send('display-answer', answerData)
+       ▼
+  Overlay Window (Overlay.jsx)
+       │
+       │  window.electron.onDisplayAnswer(callback) fired
+       ▼
+  Answer displayed on transparent widget
+
+  ─────────────────────────────────────────────────────
+  Other IPC channels:
+
+  toggle-overlay   React → main.js → show/hide overlay window
+  move-overlay     React → main.js → reposition overlay on screen
+  resize-overlay   React → main.js → resize overlay window
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  SECTION 6 ──  WHICH API KEY DOES WHAT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  AZURE_OPENAI_API_KEY
+       Used in:  backend/routes/generate.js
+       When:     Student clicks "Generate Q&A Bank" (once per job)
+       Does:     Reads resume + JD, writes 85 human-like Q&A pairs
+
+  GROQ_API_KEY  (used for TWO things)
+       1. Used in:  backend/routes/transcribe.js
+          When:     Every 4 seconds during live interview
+          Does:     Converts interviewer's spoken words to text
+
+       2. Used in:  backend/routes/groq.js
+          When:     Confidence score is below 65% (surprise question)
+          Does:     Generates a live human-sounding answer in ~2 seconds
+
+  HUGGINGFACE_API_KEY
+       Used in:  backend/vectorStore/faissManager.js
+       When:     Setup (building index) + Live (searching index)
+       Does:     Converts text to 384-number vectors
+       NOTE:     Model runs 100% locally after first download. FREE.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  SECTION 7 ──  COMPLETE FILE TREE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  c:\Interview tool\
+  │
+  ├── .env                            ← All API keys stored here
+  ├── package.json                    ← Project config + dependencies
+  ├── vite.config.js                  ← React build settings
+  ├── index.html                      ← Web page entry point
+  ├── FLOW_GUIDE.md                   ← Mermaid diagrams (original)
+  ├── FLOW.txt                        ← THIS FILE (plain text)
+  │
+  ├── electron/
+  │   ├── main.js                     ← Creates windows, manages IPC
+  │   └── preload.js                  ← Connects React to Electron safely
+  │
+  ├── backend/
+  │   ├── server.js                   ← Express server on port 3001
+  │   ├── routes/
+  │   │   ├── generate.js             ← Azure GPT-4o mini Q&A generation
+  │   │   ├── embed.js                ← Triggers FAISS index build
+  │   │   ├── search.js               ← FAISS vector similarity search
+  │   │   ├── transcribe.js           ← Groq Whisper speech-to-text
+  │   │   └── groq.js                 ← Groq LLaMA live answer fallback
+  │   ├── vectorStore/
+  │   │   ├── faissManager.js         ← Core vector engine
+  │   │   ├── store.json              ← Q&A data (created after setup)
+  │   │   └── faiss.index             ← Vector index (created after setup)
+  │   └── utils/
+  │       ├── humanizer.js            ← Removes AI-sounding phrases
+  │       └── codeFormatter.js        ← Cleans code blocks
+  │
+  └── src/
+      ├── main.jsx                    ← React starts here
+      ├── App.jsx                     ← Routes + sidebar navigation
+      ├── index.css                   ← Dark theme, all styles
+      ├── pages/
+      │   ├── Setup.jsx               ← Resume + JD input form
+      │   ├── QABank.jsx              ← View and edit 85 Q&As
+      │   └── LiveMode.jsx            ← Interview control center
+      └── components/
+          ├── Overlay.jsx             ← Transparent floating widget
+          ├── MicListener.jsx         ← Captures mic audio in chunks
+          ├── AnswerCard.jsx          ← Shows answer in main window
+          └── CodeDisplay.jsx         ← Syntax highlighted code view
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  SECTION 8 ──  RESPONSE TIME BREAKDOWN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  When a KNOWN question is asked (confidence >= 65%):
+
+       Interviewer finishes speaking    0.0s
+       Audio chunk sent to Groq         0.1s
+       Whisper returns transcript       1.2s
+       HuggingFace embeds query         1.3s
+       FAISS finds match                1.3s  (under 1 millisecond)
+       Answer appears on overlay        1.4s
+       ─────────────────────────────────────
+       TOTAL                           ~1.5 seconds
+
+  When a SURPRISE question is asked (confidence < 65%):
+
+       Interviewer finishes speaking    0.0s
+       Audio chunk sent to Groq         0.1s
+       Whisper returns transcript       1.2s
+       HuggingFace embeds query         1.3s
+       FAISS finds no good match        1.3s
+       Groq LLaMA generates answer      2.5s
+       Answer appears on overlay        2.6s
+       ─────────────────────────────────────
+       TOTAL                           ~2.5 seconds
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  SECTION 9 ──  COST PER INTERVIEW SESSION (30 minutes)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Action                              Service               Cost
+  ─────────────────────────────────────────────────────────────────
+  Generate 85 Q&A pairs (one-time)    Azure GPT-4o mini     ~$0.05
+  Embed 85 questions                  HuggingFace MiniLM    $0.00 (local)
+  FAISS search (all searches)         Local CPU             $0.00
+  Whisper transcription (30 min)      Groq Free Tier        $0.00
+  ~5 surprise live answers            Groq Free Tier        $0.00
+  ─────────────────────────────────────────────────────────────────
+  TOTAL PER INTERVIEW                                       ~$0.05
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  SECTION 10 ── HOW TO RUN THE APP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  In CMD, from inside  c:\Interview tool\
+
+  Start app in development mode:
+       npm run dev
+
+  Build as .exe installer:
+       npm run build
+
+  Start only the backend (for testing):
+       npm run backend
+
+  ─────────────────────────────────────────────────────────────────
+  What "npm run dev" starts:
+
+       Process 1  →  Vite dev server      (React UI on port 5173)
+       Process 2  →  Backend server       (Express API on port 3001)
+       Process 3  →  Electron app         (loads both windows)
+
+  All three run together at the same time.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
